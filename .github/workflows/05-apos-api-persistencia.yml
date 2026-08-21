@@ -1,0 +1,38 @@
+name: Passo 5 - apos API e persistencia
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+env:
+  STEP_TRIGGER_PHRASE: persistido
+
+jobs:
+  progress_lab:
+    if: >-
+      ${{ !github.event.repository.is_template
+      && !github.event.issue.pull_request
+      && contains(github.event.issue.title, 'Lab: ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Avançar lab
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash .github/scripts/progress-step.sh \
+            "${{ github.repository }}" \
+            "${{ github.event.issue.number }}" \
+            "${{ github.event.comment.body }}" \
+            "${{ env.STEP_TRIGGER_PHRASE }}" \
+            "${{ github.workflow }}" \
+            "06-apos-interface.yml" \
+            ".github/steps/05-criar-interface-navegacao.md" \
+            "A regra deixou de existir apenas no prompt: contratos, relacionamento, índice e testes agora oferecem defesas complementares. A unicidade por treinamento deve estar explícita tanto no comportamento HTTP quanto no banco. O próximo passo torna essa capacidade acessível pela jornada do usuário." \
+            "Para avançar, conclua API, migration e testes e comente \`${{ env.STEP_TRIGGER_PHRASE }}\`." \
+            "next"

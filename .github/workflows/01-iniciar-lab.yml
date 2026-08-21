@@ -1,0 +1,93 @@
+name: Iniciar lab
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+
+jobs:
+  start_lab:
+    name: Iniciar lab
+    if: ${{ !github.event.repository.is_template }}
+    uses: impacta-ghcp-eng-moderna/exercise-toolkit/.github/workflows/start-exercise.yml@main
+    with:
+      exercise-title: "Módulo 1 — Lab de inscritos em treinamentos"
+      issue-title-prefix: "Lab: "
+      intro-message: "Neste lab, você ampliará uma aplicação .NET existente com uma nova fatia vertical, transformando uma necessidade resumida em especificação, API, persistência, interface e evidências."
+
+  validate_start_branch:
+    name: Validar branch de início
+    needs: [start_lab]
+    if: ${{ !github.event.repository.is_template }}
+    runs-on: ubuntu-latest
+    outputs:
+      branch_available: ${{ steps.check.outputs.branch_available }}
+    steps:
+      - name: Verificar branch inicio
+        id: check
+        uses: actions/github-script@v9
+        with:
+          script: |
+            try {
+              await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: "inicio"
+              });
+              core.setOutput("branch_available", "true");
+            } catch (error) {
+              core.setOutput("branch_available", "false");
+              core.warning("A branch inicio não foi encontrada.");
+            }
+
+  post_missing_branch:
+    name: Informar branch ausente
+    needs: [start_lab, validate_start_branch]
+    if: ${{ !github.event.repository.is_template && needs.validate_start_branch.outputs.branch_available != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publicar bloqueio
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ needs.start_lab.outputs.issue-number }}
+          ISSUE_REPOSITORY: ${{ github.repository }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$ISSUE_REPOSITORY" --body "
+          > [!WARNING]
+          > O lab foi bloqueado porque a branch \`inicio\` não foi copiada.
+          >
+          > Exclua esta cópia e crie outra marcando **Include all branches**.
+          "
+
+  post_first_step:
+    name: Publicar primeiro passo
+    needs: [start_lab, validate_start_branch]
+    if: ${{ !github.event.repository.is_template && needs.validate_start_branch.outputs.branch_available == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Publicar primeiro passo
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          issue-number: ${{ needs.start_lab.outputs.issue-number }}
+          file: .github/steps/01-preparar-ambiente.md
+          vars: |
+            repository: ${{ github.repository }}
+
+      - name: Habilitar próximo passo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow enable "02-apos-preparacao.yml" --repo "${{ github.repository }}"
+
+      - name: Informar acompanhamento
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          issue-number: ${{ needs.start_lab.outputs.issue-number }}
+          body: "Siga o passo acima e use a palavra indicada somente depois de revisar o resultado com sua equipe. O próximo comentário trará feedback sobre o que acabou de ser feito antes de apresentar a etapa seguinte."

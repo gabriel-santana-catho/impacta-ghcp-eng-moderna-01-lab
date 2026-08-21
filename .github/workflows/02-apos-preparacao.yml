@@ -1,0 +1,38 @@
+name: Passo 2 - apos preparacao
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+env:
+  STEP_TRIGGER_PHRASE: preparado
+
+jobs:
+  progress_lab:
+    if: >-
+      ${{ !github.event.repository.is_template
+      && !github.event.issue.pull_request
+      && contains(github.event.issue.title, 'Lab: ') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Avançar lab
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash .github/scripts/progress-step.sh \
+            "${{ github.repository }}" \
+            "${{ github.event.issue.number }}" \
+            "${{ github.event.comment.body }}" \
+            "${{ env.STEP_TRIGGER_PHRASE }}" \
+            "${{ github.workflow }}" \
+            "03-apos-especificacao.yml" \
+            ".github/steps/02-especificar-inscricoes.md" \
+            "O ambiente e a linha de base foram confirmados. Isso cria uma referência para distinguir regressões das falhas que já existiam e evita pedir ao Copilot mudanças antes de compreender a arquitetura. Agora a equipe pode transformar a necessidade em um contrato verificável." \
+            "Para avançar, conclua a preparação e comente \`${{ env.STEP_TRIGGER_PHRASE }}\`." \
+            "next"
