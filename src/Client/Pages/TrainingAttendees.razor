@@ -1,0 +1,299 @@
+@page "/trainings/{TrainingId:guid}/attendees"
+@using System.Net
+@using System.Text.Json
+@using TrainingCatalog.Application
+@inject HttpClient Http
+
+<PageTitle>Inscritos do treinamento</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="attendees-page">
+    <MudStack Spacing="1" Class="attendees-header">
+        <MudText Typo="Typo.overline" Color="Color.Primary">Inscritos</MudText>
+        <MudText Typo="Typo.h2" GutterBottom="true">@GetPageTitle()</MudText>
+        @if (selectedTraining is not null)
+        {
+            <MudText Typo="Typo.subtitle1" Color="Color.Secondary">
+                @selectedTraining.Description
+            </MudText>
+            <div class="training-meta">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Icon="@Icons.Material.Outlined.Event">@selectedTraining.StartDate.ToString("dd/MM/yyyy")</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Icon="@Icons.Material.Outlined.Schedule">@selectedTraining.DurationHours h</MudChip>
+            </div>
+        }
+    </MudStack>
+
+    @if (isLoading)
+    {
+        <MudStack AlignItems="AlignItems.Center" Class="page-state" Spacing="2">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+            <MudText Color="Color.Secondary">Carregando inscritos...</MudText>
+        </MudStack>
+    }
+    else if (trainingNotFound)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Treinamento não encontrado.</MudAlert>
+    }
+    else
+    {
+        <MudGrid Spacing="4">
+            <MudItem xs="12" md="5">
+                <MudPaper Class="form-panel pa-5" Elevation="2">
+                    <MudText Typo="Typo.h5" GutterBottom="true">Novo inscrito</MudText>
+                    <MudForm @ref="form">
+                        <MudStack Spacing="2">
+                            <MudTextField @bind-Value="firstName" Label="Nome" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" RequiredError="O nome é obrigatório." Error='@HasFieldError("firstName")' ErrorText='@GetFieldError("firstName")' Disabled="@isSubmitting" />
+                            <MudTextField @bind-Value="lastName" Label="Sobrenome" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" RequiredError="O sobrenome é obrigatório." Error='@HasFieldError("lastName")' ErrorText='@GetFieldError("lastName")' Disabled="@isSubmitting" />
+                            <MudTextField @bind-Value="email" Label="E-mail" Variant="Variant.Outlined" Margin="Margin.Dense" Required="true" RequiredError="O e-mail é obrigatório." Error='@HasFieldError("email")' ErrorText='@GetFieldError("email")' Disabled="@isSubmitting" />
+
+                            @if (!string.IsNullOrWhiteSpace(errorMessage))
+                            {
+                                <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true">@errorMessage</MudAlert>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(successMessage))
+                            {
+                                <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true">@successMessage</MudAlert>
+                            }
+
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" Disabled="@isSubmitting" OnClick="SubmitAsync">
+                                @if (isSubmitting)
+                                {
+                                    <MudProgressCircular Class="me-2" Size="Size.Small" Indeterminate="true" />
+                                    <span>Cadastrando...</span>
+                                }
+                                else
+                                {
+                                    <span>Cadastrar inscrito</span>
+                                }
+                            </MudButton>
+                        </MudStack>
+                    </MudForm>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="7">
+                <MudPaper Class="list-panel pa-5" Elevation="2">
+                    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Start" Class="section-heading">
+                        <div>
+                            <MudText Typo="Typo.overline" Color="Color.Primary">Participantes</MudText>
+                            <MudText Typo="Typo.h5">Inscritos cadastrados</MudText>
+                        </div>
+                        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">@attendees.Count.ToString()</MudChip>
+                    </MudStack>
+
+                    @if (attendees.Count == 0)
+                    {
+                        <MudAlert Class="list-state" Severity="Severity.Info" Variant="Variant.Outlined">Ainda não há inscritos neste treinamento.</MudAlert>
+                    }
+                    else
+                    {
+                        <MudList T="Attendee" Class="attendee-list" ReadOnly="true">
+                            @foreach (var attendee in attendees)
+                            {
+                                <MudListItem T="Attendee" Class="attendee-item">
+                                    <MudText Typo="Typo.subtitle1">@attendee.FirstName @attendee.LastName</MudText>
+                                    <MudText Typo="Typo.body2" Color="Color.Secondary">@attendee.Email</MudText>
+                                </MudListItem>
+                            }
+                        </MudList>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    [Parameter]
+    public Guid TrainingId { get; set; }
+
+    private readonly Dictionary<string, string> fieldErrors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<Attendee> attendees = [];
+    private MudForm? form;
+    private Training? selectedTraining;
+    private string firstName = string.Empty;
+    private string lastName = string.Empty;
+    private string email = string.Empty;
+    private string? errorMessage;
+    private string? successMessage;
+    private bool isLoading = true;
+    private bool isSubmitting;
+    private bool trainingNotFound;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPageAsync();
+    }
+
+    private async Task LoadPageAsync()
+    {
+        isLoading = true;
+        trainingNotFound = false;
+        errorMessage = null;
+
+        try
+        {
+            using var trainingResponse = await Http.GetAsync($"api/trainings/{TrainingId}");
+
+            if (trainingResponse.StatusCode == HttpStatusCode.NotFound)
+            {
+                trainingNotFound = true;
+                return;
+            }
+
+            trainingResponse.EnsureSuccessStatusCode();
+            selectedTraining = await trainingResponse.Content.ReadFromJsonAsync<Training>();
+            await LoadAttendeesAsync();
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Não foi possível carregar os inscritos. Tente novamente.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task LoadAttendeesAsync()
+    {
+        using var response = await Http.GetAsync($"api/trainings/{TrainingId}/attendees");
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            trainingNotFound = true;
+            return;
+        }
+
+        response.EnsureSuccessStatusCode();
+        var loadedAttendees = await response.Content.ReadFromJsonAsync<Attendee[]>();
+        attendees.Clear();
+        attendees.AddRange(loadedAttendees ?? []);
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (isSubmitting)
+        {
+            return;
+        }
+
+        if (form is not null)
+        {
+            await form.ValidateAsync();
+            if (!form.IsValid)
+            {
+                return;
+            }
+        }
+
+        if (!HasValidEmailFormat())
+        {
+            fieldErrors["email"] = "O e-mail deve possuir um formato válido.";
+            errorMessage = fieldErrors["email"];
+            return;
+        }
+
+        isSubmitting = true;
+        errorMessage = null;
+        successMessage = null;
+        fieldErrors.Clear();
+
+        try
+        {
+            var request = new CreateAttendeeRequest(firstName, lastName, email);
+            using var response = await Http.PostAsJsonAsync($"api/trainings/{TrainingId}/attendees", request);
+
+            if (response.IsSuccessStatusCode)
+            {
+                successMessage = "Inscrito cadastrado com sucesso.";
+                await LoadAttendeesAsync();
+                ClearForm();
+                return;
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                trainingNotFound = true;
+                errorMessage = "Treinamento não encontrado.";
+                return;
+            }
+
+            await ReadErrorAsync(response);
+        }
+        catch (HttpRequestException)
+        {
+            errorMessage = "Não foi possível enviar o cadastro. Verifique a conexão e tente novamente.";
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+
+    private async Task ReadErrorAsync(HttpResponseMessage response)
+    {
+        var messages = new List<string>();
+
+        try
+        {
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            if (document.RootElement.TryGetProperty("errors", out var errors))
+            {
+                foreach (var error in errors.EnumerateObject())
+                {
+                    var fieldMessages = error.Value
+                        .EnumerateArray()
+                        .Select(item => item.GetString())
+                        .Where(message => !string.IsNullOrWhiteSpace(message))
+                        .ToArray();
+
+                    if (fieldMessages.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    var fieldMessage = string.Join(" ", fieldMessages);
+                    fieldErrors[error.Name] = fieldMessage;
+                    messages.Add(fieldMessage);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Usa a mensagem genérica quando a resposta não segue o contrato esperado.
+        }
+
+        errorMessage = messages.Count > 0
+            ? string.Join(" ", messages.Distinct())
+            : "Não foi possível cadastrar o inscrito. Tente novamente.";
+    }
+
+    private bool HasValidEmailFormat()
+    {
+        var trimmedEmail = email.Trim();
+        return trimmedEmail.Length >= 7 && trimmedEmail.Contains('@');
+    }
+
+    private bool HasFieldError(string fieldName)
+    {
+        return fieldErrors.ContainsKey(fieldName);
+    }
+
+    private string? GetFieldError(string fieldName)
+    {
+        return fieldErrors.TryGetValue(fieldName, out var message) ? message : null;
+    }
+
+    private string GetPageTitle()
+    {
+        return selectedTraining?.Title ?? "Treinamento";
+    }
+
+    private void ClearForm()
+    {
+        firstName = string.Empty;
+        lastName = string.Empty;
+        email = string.Empty;
+    }
+}
