@@ -14,5 +14,7 @@ public sealed class TrainingEntity
 
     public int DurationHours { get; set; }
 
+    public ICollection<AttendeeEntity> Attendees { get; set; } = [];
+
     public Training ToTraining() => new(Id, Title, Description, StartDate, DurationHours);
 }

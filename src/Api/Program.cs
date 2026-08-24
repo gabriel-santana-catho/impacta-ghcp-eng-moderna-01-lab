@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using TrainingCatalog.Application;
 using TrainingCatalog.Infrastructure;
 
@@ -199,6 +200,114 @@ app.MapDelete("/api/trainings/{id:guid}", async (Guid id, TrainingCatalogDbConte
     .Produces(StatusCodes.Status204NoContent)
     .Produces(StatusCodes.Status404NotFound);
 
+app.MapPost("/api/trainings/{trainingId:guid}/attendees", async (Guid trainingId, CreateAttendeeRequest request, TrainingCatalogDbContext dbContext) =>
+{
+	var trainingExists = await dbContext.Trainings.AnyAsync(training => training.Id == trainingId);
+
+	if (!trainingExists)
+	{
+		return Results.NotFound();
+	}
+
+	var errors = new Dictionary<string, string[]>();
+
+	if (string.IsNullOrWhiteSpace(request.FirstName))
+	{
+		errors["firstName"] = ["O nome é obrigatório."];
+	}
+
+	if (string.IsNullOrWhiteSpace(request.LastName))
+	{
+		errors["lastName"] = ["O sobrenome é obrigatório."];
+	}
+
+	var email = request.Email?.Trim();
+
+	if (string.IsNullOrWhiteSpace(email) || email.Length < 7 || !email.Contains('@'))
+	{
+		errors["email"] = ["O e-mail deve ser informado e possuir um formato válido."];
+	}
+
+	if (errors.Count > 0)
+	{
+		return Results.BadRequest(new { errors });
+	}
+
+	var emailNormalized = NormalizeEmail(email!);
+	var duplicateExists = await dbContext.Attendees.AnyAsync(attendee =>
+		attendee.TrainingId == trainingId && attendee.EmailNormalized == emailNormalized);
+
+	if (duplicateExists)
+	{
+		return Results.Conflict(new
+		{
+			errors = new Dictionary<string, string[]>
+			{
+				["email"] = ["Este e-mail já está inscrito neste treinamento."]
+			}
+		});
+	}
+
+	var attendee = new AttendeeEntity
+	{
+		Id = Guid.NewGuid(),
+		TrainingId = trainingId,
+		FirstName = request.FirstName!.Trim(),
+		LastName = request.LastName!.Trim(),
+		Email = email!,
+		EmailNormalized = emailNormalized
+	};
+
+	dbContext.Attendees.Add(attendee);
+
+	try
+	{
+		await dbContext.SaveChangesAsync();
+	}
+	catch (DbUpdateException exception) when (exception.InnerException is SqliteException sqliteException &&
+		sqliteException.SqliteErrorCode == 19 &&
+		sqliteException.Message.Contains("IX_Attendees_TrainingId_EmailNormalized", StringComparison.Ordinal))
+	{
+		return Results.Conflict(new
+		{
+			errors = new Dictionary<string, string[]>
+			{
+				["email"] = ["Este e-mail já está inscrito neste treinamento."]
+			}
+		});
+	}
+
+	var response = attendee.ToAttendee();
+	return Results.Created($"/api/trainings/{trainingId}/attendees/{response.Id}", response);
+})
+	.Produces<Attendee>(StatusCodes.Status201Created)
+	.Produces(StatusCodes.Status400BadRequest)
+	.Produces(StatusCodes.Status404NotFound)
+	.Produces(StatusCodes.Status409Conflict);
+
+app.MapGet("/api/trainings/{trainingId:guid}/attendees", async (Guid trainingId, TrainingCatalogDbContext dbContext) =>
+{
+	var trainingExists = await dbContext.Trainings.AnyAsync(training => training.Id == trainingId);
+
+	if (!trainingExists)
+	{
+		return Results.NotFound();
+	}
+
+	var attendees = await dbContext.Attendees
+		.AsNoTracking()
+		.Where(attendee => attendee.TrainingId == trainingId)
+		.OrderByDescending(attendee => attendee.Id)
+		.Select(attendee => attendee.ToAttendee())
+		.ToArrayAsync();
+
+	return Results.Ok(attendees);
+})
+	.Produces<IReadOnlyCollection<Attendee>>(StatusCodes.Status200OK)
+	.Produces(StatusCodes.Status404NotFound);
+
 app.Run();
+
+static string NormalizeEmail(string email) => email.Trim().ToUpperInvariant();
 
 public partial class Program;
